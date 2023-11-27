@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   rviz
   osrf_gear
   tf2_ros
+  ik_service
 )
 
 ## System dependencies are found with CMake's conventions

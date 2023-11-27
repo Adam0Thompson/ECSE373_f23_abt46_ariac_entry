@@ -11,11 +11,18 @@
 #include "tf2_ros/transform_listener.h"
 #include "tf2_geometry_msgs/tf2_geometry_msgs.h"
 #include "geometry_msgs/TransformStamped.h"
+#include "sensor_msgs/JointState.h"
+#include "ik_service/PoseIK.h"
 
 std::vector<osrf_gear::Order> orders;
 int current_shipment, current_product = 0;
 void orderCallback(const osrf_gear::Order msg){
     orders.push_back(msg);
+}
+
+sensor_msgs::JointState joint_states;
+void joint_states_cb(const sensor_msgs::JointState msg){
+    joint_states = msg;
 }
 
 void iterateOrder(){
@@ -82,7 +89,8 @@ int main(int argc, char **argv) {
     // Call to publish to n2 topic for no2
     //ros::Publisher cmd_vel_pub = n.advertise<geometry_msgs::Twist>("cmd_vel", 1000);
 
-    
+    // Subscribe to the arm 1 joint states topic
+    ros::Subscriber arm1_joint_states = n.subscribe("/ariac/arm1/joint_states", 10, joint_states_cb);
 
     // set the loop frequency
     ros::Rate loop_rate(10);
@@ -94,7 +102,7 @@ int main(int argc, char **argv) {
     ros::ServiceClient begin_client = 
         n.serviceClient<std_srvs::Trigger>("/ariac/start_competition");
 
-    begin_client.waitForExistence();
+    ros::service::waitForService("/ariac/start_competition", 10);
 
     if(begin_client.call(begin_comp) == false){
         ROS_ERROR_STREAM("Competition not started");
@@ -114,9 +122,14 @@ int main(int argc, char **argv) {
     // create the product locations service client
     ros::ServiceClient location_client = 
         n.serviceClient<osrf_gear::GetMaterialLocations>("/ariac/material_locations");
+    ros::service::waitForService("/ariac/material_locations", 10);
     if(location_client.call(find_location) == false){
         ROS_ERROR_STREAM("Material Locations Service not started");
     }
+
+    // Use the ik_pose service
+    ros::ServiceClient ik_client = n.serviceClient<ik_service::PoseIK>("/pose_ik");
+    ros::service::waitForService("/pose_ik", 10);
 
     bool orderFilled = true;
 
@@ -171,10 +184,7 @@ int main(int argc, char **argv) {
             }
         }
 
-
-
-        // Necessary lines for smooth program flow
-        ros::spinOnce();
+        ROS_INFO_STREAM_THROTTLE(10, "Curent joint states " << joint_states);
         loop_rate.sleep();
     }
 
