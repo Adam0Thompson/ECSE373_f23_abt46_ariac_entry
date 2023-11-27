@@ -119,6 +119,9 @@ int main(int argc, char **argv) {
     }
 
     bool orderFilled = true;
+
+    ros::AsyncSpinner spinner(1); // Use 1 thread
+    spinner.start();
     while (ros::ok())
     {
         if(orders.size() > 0 && orderFilled){
