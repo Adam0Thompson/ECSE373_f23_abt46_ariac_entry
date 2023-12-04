@@ -13,55 +13,64 @@
 #include "geometry_msgs/TransformStamped.h"
 #include "sensor_msgs/JointState.h"
 #include "ik_service/PoseIK.h"
+#include "trajectory_msgs/JointTrajectory.h"
 
 std::vector<osrf_gear::Order> orders;
 int current_shipment, current_product = 0;
-void orderCallback(const osrf_gear::Order msg){
+void orderCallback(const osrf_gear::Order msg)
+{
     orders.push_back(msg);
 }
 
 sensor_msgs::JointState joint_states;
-void joint_states_cb(const sensor_msgs::JointState msg){
+void joint_states_cb(const sensor_msgs::JointState msg)
+{
     joint_states = msg;
 }
 
-void iterateOrder(){
+void iterateOrder()
+{
     // Another product in this shipment?
-    if(current_product + 1 < sizeof(orders[0].shipments[current_shipment].products)){
+    if (current_product + 1 < sizeof(orders[0].shipments[current_shipment].products))
+    {
         current_product++; // If so, move to next
         ROS_INFO("Next Product, number %i", current_product);
     }
-    else{
+    else
+    {
         ROS_INFO("End of shipment, on to next");
         current_product = 0; // If not, move to next shipment
         // Another shipment in this order?
-        if(current_shipment + 1 < sizeof(orders[0].shipments)){
+        if (current_shipment + 1 < sizeof(orders[0].shipments))
+        {
             current_shipment++; // If so, move to next
             ROS_INFO("Next Shipment, number %i", current_shipment);
         }
-        else{
+        else
+        {
             ROS_INFO("End of order");
             // If not, order is complete. Remove the order
             orders.erase(orders.begin());
         }
     }
 }
-osrf_gear::LogicalCameraImage images [10];
-void lc_bin1_cb(const osrf_gear::LogicalCameraImage msg){images[1] = msg;}
-void lc_bin2_cb(const osrf_gear::LogicalCameraImage msg){images[2] = msg;}
-void lc_bin3_cb(const osrf_gear::LogicalCameraImage msg){images[3] = msg;}
-void lc_bin4_cb(const osrf_gear::LogicalCameraImage msg){images[4] = msg;}
-void lc_bin5_cb(const osrf_gear::LogicalCameraImage msg){images[5] = msg;}
-void lc_bin6_cb(const osrf_gear::LogicalCameraImage msg){images[6] = msg;}
-void lc_agv1_cb(const osrf_gear::LogicalCameraImage msg){images[7] = msg;}
-void lc_agv2_cb(const osrf_gear::LogicalCameraImage msg){images[8] = msg;}
-void lc_qcs2_cb(const osrf_gear::LogicalCameraImage msg){images[9] = msg;}
-void lc_qcs1_cb(const osrf_gear::LogicalCameraImage msg){images[0] = msg;}
+osrf_gear::LogicalCameraImage images[10];
+void lc_bin1_cb(const osrf_gear::LogicalCameraImage msg) { images[1] = msg; }
+void lc_bin2_cb(const osrf_gear::LogicalCameraImage msg) { images[2] = msg; }
+void lc_bin3_cb(const osrf_gear::LogicalCameraImage msg) { images[3] = msg; }
+void lc_bin4_cb(const osrf_gear::LogicalCameraImage msg) { images[4] = msg; }
+void lc_bin5_cb(const osrf_gear::LogicalCameraImage msg) { images[5] = msg; }
+void lc_bin6_cb(const osrf_gear::LogicalCameraImage msg) { images[6] = msg; }
+void lc_agv1_cb(const osrf_gear::LogicalCameraImage msg) { images[7] = msg; }
+void lc_agv2_cb(const osrf_gear::LogicalCameraImage msg) { images[8] = msg; }
+void lc_qcs2_cb(const osrf_gear::LogicalCameraImage msg) { images[9] = msg; }
+void lc_qcs1_cb(const osrf_gear::LogicalCameraImage msg) { images[0] = msg; }
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     // Initialize the node
     ros::init(argc, argv, "ariac_entry");
-    
+
     // Initiate the transfrom listener first so it has time to collect everything
     // Declare the transformation buffer to maintain a list of transformations
     tf2_ros::Buffer tfBuffer;
@@ -86,11 +95,18 @@ int main(int argc, char **argv) {
     ros::Subscriber lc_agv2 = n.subscribe("/ariac/logical_camera_agv2", 10, lc_agv2_cb);
     ros::Subscriber lc_qcs1 = n.subscribe("/ariac/quality_control_sensor_1", 10, lc_qcs1_cb);
     ros::Subscriber lc_qcs2 = n.subscribe("/ariac/quality_control_sensor_2", 10, lc_qcs2_cb);
+
     // Call to publish to n2 topic for no2
-    //ros::Publisher cmd_vel_pub = n.advertise<geometry_msgs::Twist>("cmd_vel", 1000);
+    ros::Publisher joint_trajectory_pub = n.advertise<trajectory_msgs::JointTrajectory>("ariac/arm1/arm/command", 100);
 
     // Subscribe to the arm 1 joint states topic
     ros::Subscriber arm1_joint_states = n.subscribe("/ariac/arm1/joint_states", 10, joint_states_cb);
+
+    // Instantiate variables for use with the kinematic system.
+    double T_pose[4][4], T_des[4][4];
+    double q_pose[6], q_des[8][6];
+
+    trajectory_msgs::JointTrajectory joint_trajectory;
 
     // set the loop frequency
     ros::Rate loop_rate(10);
@@ -99,45 +115,51 @@ int main(int argc, char **argv) {
     std_srvs::Trigger begin_comp;
 
     // create the competition start service client
-    ros::ServiceClient begin_client = 
+    ros::service::waitForService("/ariac/start_competition", 100000);
+    ros::ServiceClient begin_client =
         n.serviceClient<std_srvs::Trigger>("/ariac/start_competition");
 
-    ros::service::waitForService("/ariac/start_competition", 10);
-
-    if(begin_client.call(begin_comp) == false){
+    if (begin_client.call(begin_comp) == false)
+    {
         ROS_ERROR_STREAM("Competition not started");
     }
-    else if(begin_comp.response.success == false){
+    else if (begin_comp.response.success == false)
+    {
         ROS_WARN("Competition service returned failure: %s",
-            begin_comp.response.message.c_str());
+                 begin_comp.response.message.c_str());
     }
-    else{
-        ROS_INFO("Competition service called succesfully: %s", 
-            begin_comp.response.message.c_str());
+    else
+    {
+        ROS_INFO("Competition service called succesfully: %s",
+                 begin_comp.response.message.c_str());
     }
 
     // initialize the competition start variable
     osrf_gear::GetMaterialLocations find_location;
 
     // create the product locations service client
-    ros::ServiceClient location_client = 
+    ros::ServiceClient location_client =
         n.serviceClient<osrf_gear::GetMaterialLocations>("/ariac/material_locations");
-    ros::service::waitForService("/ariac/material_locations", 10);
-    if(location_client.call(find_location) == false){
+    ros::service::waitForService("/ariac/material_locations", 10000);
+    if (location_client.call(find_location) == false)
+    {
         ROS_ERROR_STREAM("Material Locations Service not started");
     }
 
     // Use the ik_pose service
     ros::ServiceClient ik_client = n.serviceClient<ik_service::PoseIK>("/pose_ik");
-    ros::service::waitForService("/pose_ik", 10);
-
+    ros::service::waitForService("/pose_ik", 10000);
+    ik_service::PoseIK pose_ik;
     bool orderFilled = true;
 
     ros::AsyncSpinner spinner(1); // Use 1 thread
     spinner.start();
+
+    int count = 0;
     while (ros::ok())
     {
-        if(orders.size() > 0 && orderFilled){
+        if (orders.size() > 0 && orderFilled)
+        {
             // Indicate that a new order is being processed
             orderFilled = false;
 
@@ -147,29 +169,61 @@ int main(int argc, char **argv) {
 
             // Use the response to determine where the part is located
             find_location.request.material_type = product_type;
-            if(location_client.call(find_location)){
+            if (location_client.call(find_location))
+            {
                 std::string bin_s = find_location.response.storage_units[0].unit_id;
                 ROS_INFO_STREAM("Located in: " + bin_s);
 
                 // Determine which bin is being used
                 int bin;
                 std::string frame;
-                if(bin_s == "bin1"){bin = 1;frame="logical_camera_bin1_frame";}
-                else if(bin_s == "bin2"){bin = 2;frame="logical_camera_bin2_frame";}
-                else if(bin_s == "bin3"){bin = 3;frame="logical_camera_bin3_frame";}
-                else if(bin_s == "bin4"){bin = 4;frame="logical_camera_bin4_frame";}
-                else if(bin_s == "bin5"){bin = 5;frame="logical_camera_bin5_frame";}
-                else if(bin_s == "bin6"){bin = 6;frame="logical_camera_bin6_frame";}
-                else{bin = 0;frame="logical_camera_bin4_frame";}
+                if (bin_s == "bin1")
+                {
+                    bin = 1;
+                    frame = "logical_camera_bin1_frame";
+                }
+                else if (bin_s == "bin2")
+                {
+                    bin = 2;
+                    frame = "logical_camera_bin2_frame";
+                }
+                else if (bin_s == "bin3")
+                {
+                    bin = 3;
+                    frame = "logical_camera_bin3_frame";
+                }
+                else if (bin_s == "bin4")
+                {
+                    bin = 4;
+                    frame = "logical_camera_bin4_frame";
+                }
+                else if (bin_s == "bin5")
+                {
+                    bin = 5;
+                    frame = "logical_camera_bin5_frame";
+                }
+                else if (bin_s == "bin6")
+                {
+                    bin = 6;
+                    frame = "logical_camera_bin6_frame";
+                }
+                else
+                {
+                    bin = 0;
+                    frame = "logical_camera_bin4_frame";
+                }
 
                 osrf_gear::LogicalCameraImage image = images[bin];
 
                 // Retrieve the transformation
                 geometry_msgs::TransformStamped tfStamped;
-                try {
+                try
+                {
                     tfStamped = tfBuffer.lookupTransform("arm1_base_link", frame, ros::Time(0.0), ros::Duration(1.0));
                     ROS_DEBUG("Transform to [%s] from [%s]", tfStamped.header.frame_id.c_str(), tfStamped.child_frame_id.c_str());
-                } catch (tf2::TransformException &ex) {
+                }
+                catch (tf2::TransformException &ex)
+                {
                     ROS_ERROR("%s", ex.what());
                 }
                 // Create variables
@@ -180,14 +234,76 @@ int main(int argc, char **argv) {
 
                 // Display the pose and the transformed pose as well
                 ROS_INFO_STREAM("Found " + product_type + " in " + bin_s + " at camera Pose " << image.models[0].pose << "\nand arm pose " << goal_pose.pose);
+
+                // Send the desired position to the joint_trajectory node
+                pose_ik.request.part_pose = goal_pose.pose;
+                // pose_ik.request.part_pose.position.x = -0;
+                ROS_INFO_STREAM("Sending to service: " << pose_ik.request);
+                if (ik_client.call(pose_ik))
+                {
+                    ROS_INFO("Response returned %i solutions", pose_ik.response.num_sols);
+                }
+                else
+                {
+                    ROS_ERROR("Failed to call service ik_service");
+                    return 1;
+                }
             
+                // Fill out the joint trajectory header.
+                // Each joint trajectory should have an non-monotonically increasing sequence number.
+                joint_trajectory.header.seq = count++;
+                joint_trajectory.header.stamp = ros::Time::now(); // When was this message created.
+                joint_trajectory.header.frame_id = "/world";      // Frame in which this is specified.
+
+                // Set the names of the joints being used. All must be present.
+                joint_trajectory.joint_names.clear();
+                joint_trajectory.joint_names.push_back("linear_arm_actuator_joint");
+                joint_trajectory.joint_names.push_back("shoulder_pan_joint");
+                joint_trajectory.joint_names.push_back("shoulder_lift_joint");
+                joint_trajectory.joint_names.push_back("elbow_joint");
+                joint_trajectory.joint_names.push_back("wrist_1_joint");
+                joint_trajectory.joint_names.push_back("wrist_2_joint");
+                joint_trajectory.joint_names.push_back("wrist_3_joint");
+                // Set a start and end point.
+                joint_trajectory.points.resize(2);
+                // Set the start point to the current position of the joints from joint_states.
+                joint_trajectory.points[0].positions.resize(joint_trajectory.joint_names.size());
+                for (int indy = 0; indy < joint_trajectory.joint_names.size(); indy++)
+                {
+                    for (int indz = 0; indz < joint_states.name.size(); indz++)
+                    {
+                        if (joint_trajectory.joint_names[indy] == joint_states.name[indz])
+                        {
+                            joint_trajectory.points[0].positions[indy] = joint_states.position[indz];
+                            break;
+                        }
+                    }
+                }
+
+                // When to start (immediately upon receipt).
+                joint_trajectory.points[0].time_from_start = ros::Duration(0.0);
+                // Must select which of the num_sols solutions to use. Just start with the first.
+                int joint_sols_indx = 0;
+                // Set the end point for the movement
+                joint_trajectory.points[1].positions.resize(joint_trajectory.joint_names.size());
+                // Set the linear_arm_actuator_joint from joint_states as it is not part of the inverse kinematics solution.
+                joint_trajectory.points[1].positions[0] = joint_states.position[1];
+                // The actuators are commanded in an odd order, enter the joint positions in the correct positions
+                for (int indy = 0; indy < 6; indy++)
+                {
+                    joint_trajectory.points[1].positions[indy + 1] = pose_ik.response.joint_solutions[joint_sols_indx].joint_angles[indy];
+                }
+                // How long to take for the movement.
+                joint_trajectory.points[1].time_from_start = ros::Duration(1.0);
+
+                ROS_INFO_STREAM("Sending to /ariac/arm/arm1/command" << joint_trajectory);
+                joint_trajectory_pub.publish(joint_trajectory);
             }
         }
 
-        ROS_INFO_STREAM_THROTTLE(10, "Curent joint states " << joint_states);
+        ROS_INFO_STREAM_THROTTLE(10, "Current joint states " << joint_states);
         loop_rate.sleep();
     }
 
-
-  return 0;
+    return 0;
 }
