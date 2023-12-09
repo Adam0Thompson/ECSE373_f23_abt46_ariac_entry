@@ -7,6 +7,8 @@ This packages has an executable which will initialize the competition, use the O
 The final state of the robot should look like this:
 ![](cap1.png)
 
+Following this, trajectories can be created to allow the robot to move in more ways. A slight change to the addPoint() function would allow it to include a movement on the linear rail, and it could be used to activate the vacuum gripper as well. This was all I had time to create, so I stopped here.
+
 ## How to use
 This package can be run using the following instructions
 1. Clone this package into a catkin repository
@@ -16,5 +18,5 @@ This package can be run using the following instructions
 4. Run the following in all three of the above directories
 > source devel/setup.bash
 5. Run the package using the launch file
-> roslaunch ariac_entry entry.launch 
+> roslaunch ariac_entry competition.launch 
 6. Press play (if necessary) on the gazebo simulation
