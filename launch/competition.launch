@@ -1,0 +1,31 @@
+<launch>
+    <arg name="development" default="true" doc="Whether run ARIAC in development mode [true|false]" />
+    <arg name="verbose" default="false" doc="Whether to run gazebo in verbose mode [false|true]" />
+    <arg name="state_logging" default="false" doc="Whether to keep execution logs [false|true]" />
+    <arg name="no_gui" default="false" doc="Whether to run the environment without a GUI [false|true]" />
+    <arg name="fill_demo_shipment" default="false" doc="Fill demo shipment [false|true]" />
+    <arg name="world_path" default="$(find ecse_373_ariac)/worlds/gear.world" />
+    <arg name="gear_urdf_xacro" default="$(find ecse_373_ariac)/urdf/gear.urdf.xacro" />
+    <arg name="arm_urdf_dir" default="$(find ecse_373_ariac)/urdf/" />
+    <arg name="trial_file" default="trial_01_config.yaml" />
+    <arg name="trial" default="$(find ecse_373_ariac)/config/$(arg trial_file)" />
+    <arg name="environ_file" default="environment_config.yaml" />
+    <arg name="environ" default="$(find ecse_373_ariac)/config/$(arg environ_file)" />
+    <include file="$(find ecse_373_ariac)/launch/ecse_373_ariac.launch">
+        <arg name="python" value = "false"/>
+        <arg name="development" value="$(arg development)" />
+        <arg name="verbose" value="$(arg verbose)" />
+        <arg name="state_logging" value="$(arg state_logging)" />
+        <arg name="no_gui" value="$(arg no_gui)" />
+        <arg name="fill_demo_shipment" value="$(arg fill_demo_shipment)" />
+        <arg name="world_path" value="$(arg world_path)" />
+        <arg name="gear_urdf_xacro" value="$(arg gear_urdf_xacro)" />
+        <arg name="arm_urdf_dir" value="$(arg arm_urdf_dir)" />
+        <arg name="trial_file" value="$(arg trial_file)" />
+        <arg name="trial" value="$(arg trial)" />
+        <arg name="environ_file" value="$(arg environ_file)" />
+        <arg name="environ" value="$(arg environ)" />
+    </include>
+    <node name = "pose_ik" pkg = "ik_service" type = "ik_service_node" output = "screen"/>
+    <node name = "ariac_entry_node" pkg = "ariac_entry" type = "ariac_entry_node" output = "screen"/>
+</launch>
