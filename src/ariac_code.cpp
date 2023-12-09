@@ -14,6 +14,10 @@
 #include "sensor_msgs/JointState.h"
 #include "ik_service/PoseIK.h"
 #include "trajectory_msgs/JointTrajectory.h"
+#include "actionlib/client/simple_action_client.h"
+#include "actionlib/client/terminal_state.h"
+#include "control_msgs/FollowJointTrajectoryAction.h"
+#include "ur_kinematics/ur_kin.h"
 
 std::vector<osrf_gear::Order> orders;
 int current_shipment, current_product = 0;
@@ -66,6 +70,78 @@ void lc_agv2_cb(const osrf_gear::LogicalCameraImage msg) { images[8] = msg; }
 void lc_qcs2_cb(const osrf_gear::LogicalCameraImage msg) { images[9] = msg; }
 void lc_qcs1_cb(const osrf_gear::LogicalCameraImage msg) { images[0] = msg; }
 
+void goalActiveCallback()
+{
+    ROS_INFO("New trajectory sent, goal is active");
+}
+void feedbackCallback(const control_msgs::FollowJointTrajectoryFeedbackConstPtr &fb)
+{
+}
+void resultCallback(const actionlib::SimpleClientGoalState &gs, const control_msgs::FollowJointTrajectoryResultConstPtr &res)
+{
+    ROS_INFO_STREAM("Process finished, goal state: " << gs.toString().c_str());
+}
+trajectory_msgs::JointTrajectory joint_trajectory;
+void addPoint(const geometry_msgs::Pose input_pose, ros::ServiceClient ik_client, trajectory_msgs::JointTrajectory *joint_trajectory, int gripper)
+{
+    ik_service::PoseIK pose_ik;
+
+    // Send the desired position to the joint_trajectory node
+    pose_ik.request.part_pose = input_pose;
+
+    // pose_ik.request.part_pose.position.x = -0;
+    ROS_INFO_STREAM("inner loop reqyest: " << pose_ik.request);
+    ROS_INFO_STREAM("Sending to service: " << pose_ik.request);
+    if (ik_client.call(pose_ik))
+    {
+        ROS_INFO("Response returned %i solutions", pose_ik.response.num_sols);
+    }
+    else
+    {
+        ROS_ERROR("Failed to call service ik_service");
+    }
+    int current_point = (*joint_trajectory).points.size();
+    // Set a start and end point.
+    (*joint_trajectory).points.resize(current_point + 1);
+    // Set the start point to the current position of the joints from joint_states.
+    // When to start (immediately upon receipt).
+    (*joint_trajectory).points[current_point].time_from_start = ros::Duration(2.0 * (current_point + 1));
+    (*joint_trajectory).points[current_point].positions.resize((*joint_trajectory).joint_names.size() + 1);
+
+    // Must select which of the num_sols solutions to use. Just start with the first.
+    ROS_INFO_STREAM(pose_ik.response);
+    int joint_sols_indx = 0;
+    for (int i = 0; i < pose_ik.response.num_sols; i++)
+    {
+        ROS_INFO("Checking response [%i]", i);
+        if ((pose_ik.response.joint_solutions[i].joint_angles[0] >=  0) && (pose_ik.response.joint_solutions[i].joint_angles[0] <=  3.1415 / 2) &&
+        (pose_ik.response.joint_solutions[i].joint_angles[1] >= (3.14)) && (pose_ik.response.joint_solutions[i].joint_angles[1] <= (3.14 * 2)) &&
+        (pose_ik.response.joint_solutions[i].joint_angles[4] >= 4.6) && (pose_ik.response.joint_solutions[i].joint_angles[4] <= 4.9))
+        {
+            joint_sols_indx = i;
+            ROS_INFO("Selected response [%i]", joint_sols_indx);
+            break;
+        }
+    }
+    if (joint_sols_indx >= 8)
+    {
+        ROS_ERROR("No adequate solutions");
+        joint_sols_indx = 0;
+    }
+    ROS_INFO("Using solution [%i]", joint_sols_indx);
+
+    // The actuators are commanded in an odd order, enter the joint positions in the correct positions
+
+    // Set the linear_arm_actuator_joint from joint_states as it is not part of the inverse kinematics solution.
+    (*joint_trajectory).points[current_point].positions[0] = joint_states.position[1];
+    for (int indy = 0; indy < 6; indy++)
+    {
+        (*joint_trajectory).points[current_point].positions[indy + 1] = pose_ik.response.joint_solutions[joint_sols_indx].joint_angles[indy];
+    }
+    (*joint_trajectory).points[current_point].positions[(*joint_trajectory).joint_names.size()] = gripper;
+    ROS_INFO_STREAM("Current point (in loop): " << (*joint_trajectory));
+}
+
 int main(int argc, char **argv)
 {
     // Initialize the node
@@ -105,8 +181,6 @@ int main(int argc, char **argv)
     // Instantiate variables for use with the kinematic system.
     double T_pose[4][4], T_des[4][4];
     double q_pose[6], q_des[8][6];
-
-    trajectory_msgs::JointTrajectory joint_trajectory;
 
     // set the loop frequency
     ros::Rate loop_rate(10);
@@ -149,15 +223,23 @@ int main(int argc, char **argv)
     // Use the ik_pose service
     ros::ServiceClient ik_client = n.serviceClient<ik_service::PoseIK>("/pose_ik");
     ros::service::waitForService("/pose_ik", 10000);
-    ik_service::PoseIK pose_ik;
     bool orderFilled = true;
+
+    // Instantiate the Action Server Client
+    actionlib::SimpleActionClient<control_msgs::FollowJointTrajectoryAction>
+        trajectory_ac("ariac/arm1/arm/follow_joint_trajectory", true);
+
+    // Create the structure to populate for running the Action Server
+    control_msgs::FollowJointTrajectoryAction joint_trajectory_as;
 
     ros::AsyncSpinner spinner(1); // Use 1 thread
     spinner.start();
 
     int count = 0;
+    int msgCnt = 0;
     while (ros::ok())
     {
+        ROS_INFO_STREAM_THROTTLE(10, "Current joint states " << joint_states);
         if (orders.size() > 0 && orderFilled)
         {
             // Indicate that a new order is being processed
@@ -171,6 +253,7 @@ int main(int argc, char **argv)
             find_location.request.material_type = product_type;
             if (location_client.call(find_location))
             {
+                ROS_INFO_STREAM("Current joint states " << joint_states);
                 std::string bin_s = find_location.response.storage_units[0].unit_id;
                 ROS_INFO_STREAM("Located in: " + bin_s);
 
@@ -234,21 +317,7 @@ int main(int argc, char **argv)
 
                 // Display the pose and the transformed pose as well
                 ROS_INFO_STREAM("Found " + product_type + " in " + bin_s + " at camera Pose " << image.models[0].pose << "\nand arm pose " << goal_pose.pose);
-
-                // Send the desired position to the joint_trajectory node
-                pose_ik.request.part_pose = goal_pose.pose;
-                // pose_ik.request.part_pose.position.x = -0;
-                ROS_INFO_STREAM("Sending to service: " << pose_ik.request);
-                if (ik_client.call(pose_ik))
-                {
-                    ROS_INFO("Response returned %i solutions", pose_ik.response.num_sols);
-                }
-                else
-                {
-                    ROS_ERROR("Failed to call service ik_service");
-                    return 1;
-                }
-            
+                joint_trajectory.points.clear();
                 // Fill out the joint trajectory header.
                 // Each joint trajectory should have an non-monotonically increasing sequence number.
                 joint_trajectory.header.seq = count++;
@@ -264,9 +333,9 @@ int main(int argc, char **argv)
                 joint_trajectory.joint_names.push_back("wrist_1_joint");
                 joint_trajectory.joint_names.push_back("wrist_2_joint");
                 joint_trajectory.joint_names.push_back("wrist_3_joint");
-                // Set a start and end point.
-                joint_trajectory.points.resize(2);
+
                 // Set the start point to the current position of the joints from joint_states.
+                joint_trajectory.points.resize(1);
                 joint_trajectory.points[0].positions.resize(joint_trajectory.joint_names.size());
                 for (int indy = 0; indy < joint_trajectory.joint_names.size(); indy++)
                 {
@@ -279,29 +348,39 @@ int main(int argc, char **argv)
                         }
                     }
                 }
-
                 // When to start (immediately upon receipt).
-                joint_trajectory.points[0].time_from_start = ros::Duration(0.0);
-                // Must select which of the num_sols solutions to use. Just start with the first.
-                int joint_sols_indx = 0;
-                // Set the end point for the movement
-                joint_trajectory.points[1].positions.resize(joint_trajectory.joint_names.size());
-                // Set the linear_arm_actuator_joint from joint_states as it is not part of the inverse kinematics solution.
-                joint_trajectory.points[1].positions[0] = joint_states.position[1];
-                // The actuators are commanded in an odd order, enter the joint positions in the correct positions
-                for (int indy = 0; indy < 6; indy++)
-                {
-                    joint_trajectory.points[1].positions[indy + 1] = pose_ik.response.joint_solutions[joint_sols_indx].joint_angles[indy];
-                }
-                // How long to take for the movement.
-                joint_trajectory.points[1].time_from_start = ros::Duration(1.0);
+                joint_trajectory.points[0].time_from_start = ros::Duration(0.2);
+                geometry_msgs::Pose to_send;
+                to_send.position.x = 0;
+                to_send.position.y = goal_pose.pose.position.y;
+                to_send.position.z = goal_pose.pose.position.z + 0.2;
+
+                addPoint(to_send, ik_client, (trajectory_msgs::JointTrajectory *)&joint_trajectory, 0);
+                // Next point will be just the y movement to the part
+                to_send.position.x = goal_pose.pose.position.x;
+                addPoint(to_send, ik_client, (trajectory_msgs::JointTrajectory *)&joint_trajectory, 0);
+                
+                // Next point will be to z + 0.1
+                to_send.position.z = goal_pose.pose.position.z + .1;
+                addPoint(to_send, ik_client, (trajectory_msgs::JointTrajectory *)&joint_trajectory, 0);
+
+                // Next will be the proper z.
+                to_send.position.z = goal_pose.pose.position.z + .01;
+                addPoint(to_send, ik_client, (trajectory_msgs::JointTrajectory *)&joint_trajectory, 0);
 
                 ROS_INFO_STREAM("Sending to /ariac/arm/arm1/command" << joint_trajectory);
                 joint_trajectory_pub.publish(joint_trajectory);
+                // joint_trajectory_as.action_goal.goal.trajectory = joint_trajectory;
+                // joint_trajectory_as.action_goal.header.seq = count++;
+                // joint_trajectory_as.action_goal.header.stamp = ros::Time::now(); // When was this message created.
+                // joint_trajectory_as.action_goal.header.frame_id = "/world";
+                // joint_trajectory_as.action_goal.goal_id.stamp = ros::Time::now();
+                // joint_trajectory_as.action_goal.goal_id.id = "Message" + msgCnt++;
+
+                // trajectory_ac.sendGoal(joint_trajectory_as.action_goal.goal, &resultCallback, &goalActiveCallback, &feedbackCallback);
             }
         }
 
-        ROS_INFO_STREAM_THROTTLE(10, "Current joint states " << joint_states);
         loop_rate.sleep();
     }
 

@@ -55,6 +55,7 @@
   <build_depend>tf2_ros</build_depend>
   <build_depend>cwru_ariac_2019</build_depend>
   <build_depend>ik_service</build_depend>
+  <build_depend>actionlib</build_depend>
   <build_export_depend>ecse_373_ariac</build_export_depend>
   <build_export_depend>roscpp</build_export_depend>
   <build_export_depend>rviz</build_export_depend>

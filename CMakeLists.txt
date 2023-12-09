@@ -14,6 +14,8 @@ find_package(catkin REQUIRED COMPONENTS
   osrf_gear
   tf2_ros
   ik_service
+  actionlib
+  ur_kinematics
 )
 
 ## System dependencies are found with CMake's conventions
@@ -207,4 +209,5 @@ add_executable(ariac_entry_node src/ariac_code.cpp)
 
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
+list(FILTER catkin_LIBRARIES EXCLUDE REGEX .*libur[3|5].*)
 target_link_libraries(ariac_entry_node ${catkin_LIBRARIES})
